@@ -32,7 +32,7 @@ steps:
 
 - name: Upload test results to BuildPulse
   if: '!cancelled()'
-  uses: buildpulse/buildpulse-action@v2
+  uses: BuildPulseLLC/test-reporter-action@v3
   with:
     api-token: ${{ secrets.BUILDPULSE_API_TOKEN }}
     path: reports/junit.xml
@@ -48,7 +48,7 @@ Use the `command` input to let the action run your tests and capture CPU/memory 
 steps:
 - name: Run tests & upload to BuildPulse
   if: '!cancelled()'
-  uses: buildpulse/buildpulse-action@v2
+  uses: BuildPulseLLC/test-reporter-action@v3
   with:
     api-token: ${{ secrets.BUILDPULSE_API_TOKEN }}
     command: npm test
@@ -84,7 +84,7 @@ When using wrap mode:
 steps:
 - name: Upload test results to BuildPulse
   if: '!cancelled()'
-  uses: buildpulse/buildpulse-action@v2
+  uses: BuildPulseLLC/test-reporter-action@v3
   with:
     account: <buildpulse-account-id>
     repository: <buildpulse-repository-id>
@@ -138,7 +138,3 @@ npm test
 | `src/sampler.js` | CPU/memory resource sampler for wrap mode metrics |
 | `action.yml` | GitHub Action definition (inputs, outputs, runs) |
 
-## Branch Status
-
-- `main`: Stable v2 with API token auth
-- `v2-modernization`: GitHub App authentication migration (**pending merge** — do not merge until coordinated with web-client and environment changes)
