@@ -1,0 +1,131 @@
+name: BuildPulse
+description: |
+  Send test results to buildpulse.io to help you identify and eliminate flaky
+  tests
+author: BuildPulse
+branding:
+  icon: "activity"
+  color: "gray-dark"
+inputs:
+  api-token:
+    description: |
+      BuildPulse API token for authentication (recommended).
+
+      Create an API token in your BuildPulse organization settings.
+      In GitHub, create an encrypted secret and use it as the value for this
+      input in your workflow.
+    required: false
+  account:
+    description: |
+      BuildPulse's unique numeric identifier for the account that owns the
+      repository.
+
+      Note: This is only required when using legacy key/secret authentication.
+      If using api-token, this input is not needed.
+    required: false
+  repository:
+    description: |
+      BuildPulse's unique numeric identifier for the repository.
+
+      Note: This is only required when using legacy key/secret authentication.
+      If using api-token, this input is not needed.
+    required: false
+  path:
+    description: |
+      Path to the XML file(s) for the test results.
+
+      The path can be a directory (e.g., "test/reports"), a single file (e.g.,
+      "reports/junit.xml"), or a glob (e.g., "app/*/results/*.xml").
+    required: true
+  key:
+    description: |
+      BuildPulse access key ID for the account that owns the repository.
+
+      Note: Legacy authentication method. We recommend using api-token instead.
+
+      In the GitHub settings for your repository, create an encrypted secret
+      named BUILDPULSE_ACCESS_KEY_ID and set its value to the BuildPulse access
+      key ID for your account. For help creating encrypted secrets, please see
+      the GitHub docs at https://bit.ly/3Fjl4e7.
+
+      Then, use the encrypted secret as the value for the 'key' input in your
+      workflow. For help using a secret in a workflow, please see the GitHub
+      docs at https://bit.ly/3LICKlE.
+    required: false
+  secret:
+    description: |
+      BuildPulse secret access key for the account that owns the repository.
+
+      Note: Legacy authentication method. We recommend using api-token instead.
+
+      In the GitHub settings for your repository, create an encrypted secret
+      named BUILDPULSE_SECRET_ACCESS_KEY and set its value to the BuildPulse
+      secret access key for your account. For help creating encrypted secrets,
+      please see the GitHub docs at https://bit.ly/3Fjl4e7.
+
+      Then, use the encrypted secret as the value for the 'secret' input in your
+      workflow. For help using a secret in a workflow, please see the GitHub
+      docs at https://bit.ly/3LICKlE.
+    required: false
+  repository-path:
+    description: |
+      Path to the local git clone of the repository (default: ".").
+    default: "."
+    required: false
+  commit:
+    description: |
+      Commit SHA for the commit that produced the test results.
+
+      If your workflow checks out a *different* commit than the commit that
+      triggered the workflow, then use this input to specify the commit SHA that
+      your workflow checked out. For example, if your workflow is triggered by
+      the `pull_request` event, but you customize the workflow to check out the
+      pull request HEAD commit as described in https://bit.ly/37aEvcn, then
+      you'll want to set this input to the pull request HEAD commit SHA.
+    default: "${{ github.sha }}"
+    required: false
+  coverage-files:
+    description: |
+      Paths to coverage files (space-separated).
+    default: ""
+    required: false
+  tags:
+    description: |
+      Tags to apply to this build (space-separated).
+    default: ""
+    required: false
+  quota:
+    description: |
+      Quota ID to count this upload against. Please set on BuildPulse Dashboard first.
+    default: ""
+    required: false
+  command:
+    description: |
+      Test command to execute (optional). When provided the action runs in
+      "wrap mode": it starts collecting CPU and memory metrics, executes the
+      command, stops collecting, and then uploads test results along with
+      the captured resource metrics.
+
+      The command runs in a shell and its stdout/stderr are streamed through
+      so you see your normal test output.
+
+      Example: "npm test", "pytest --junitxml=results.xml", "go test ./..."
+    default: ""
+    required: false
+  api-host:
+    description: |
+      BuildPulse API host (for internal testing only).
+    default: ""
+    required: false
+outputs:
+  upload-id:
+    description: "The unique identifier for this upload"
+  account-id:
+    description: "The BuildPulse account ID"
+  repository-id:
+    description: "The BuildPulse repository ID"
+  command-exit-code:
+    description: "Exit code of the test command (only set when using command input)"
+runs:
+  using: node20
+  main: dist/index.js
