@@ -62,13 +62,27 @@ function runCommand(command) {
  */
 async function run() {
   try {
+    // Read credential inputs FIRST and register them with the runner so any
+    // subsequent log/error path replaces them with `***`. GitHub Actions only
+    // auto-masks values registered as repo secrets; if a customer passes a
+    // credential through a non-secret input or env var, an unintended log
+    // would otherwise leak it in plaintext. We must call core.setSecret()
+    // BEFORE any other input read can throw (e.g. the required `path` input)
+    // so even an early-fail error message can't include credential values.
+    const apiToken = core.getInput('api-token')
+    const key = core.getInput('key')
+    const secret = core.getInput('secret')
+    if (apiToken) core.setSecret(apiToken)
+    if (key) core.setSecret(key)
+    if (secret) core.setSecret(secret)
+
     // Get inputs
     const inputs = {
-      apiToken: core.getInput('api-token'),
+      apiToken,
       account: core.getInput('account'),
       repository: core.getInput('repository'),
-      key: core.getInput('key'),
-      secret: core.getInput('secret'),
+      key,
+      secret,
       path: core.getInput('path', { required: true }),
       repositoryPath: core.getInput('repository-path') || '.',
       commit: core.getInput('commit'),
