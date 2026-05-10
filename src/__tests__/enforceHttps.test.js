@@ -31,14 +31,7 @@ describe('enforceHttps', () => {
     expect(() => enforceHttps('http://127.0.0.1:8080')).not.toThrow()
   })
 
-  // Known Phase 2 bug: documented behaviour accepts `http://[::1]:8080` but
-  // the URL parser yields `[::1]` (with brackets) for `hostname`, and the
-  // HTTP_ALLOWED_HOSTS set in src/upload.js stores `::1` (without brackets).
-  // `test.failing` keeps the suite green while pinning the spec — when the
-  // implementation is fixed (e.g. by stripping the brackets or adding `[::1]`
-  // to the allowed set), this test flips to red and prompts a removal of
-  // `.failing`.
-  test.failing('accepts http://[::1]:8080 (dev carve-out)', () => {
+  test('accepts http://[::1]:8080 (dev carve-out)', () => {
     expect(() => enforceHttps('http://[::1]:8080')).not.toThrow()
   })
 
