@@ -113,7 +113,10 @@ function enforceHttps(apiHost) {
 
   if (parsed.protocol === 'https:') return
 
-  if (parsed.protocol === 'http:' && HTTP_ALLOWED_HOSTS.has(parsed.hostname)) return
+  // URL.hostname wraps IPv6 in brackets ("[::1]"); HTTP_ALLOWED_HOSTS stores "::1".
+  const hostname = parsed.hostname.replace(/^\[|\]$/g, '')
+
+  if (parsed.protocol === 'http:' && HTTP_ALLOWED_HOSTS.has(hostname)) return
 
   throw new Error(
     `api-host must use HTTPS (got ${parsed.protocol}//${parsed.hostname}). ` +
@@ -285,5 +288,12 @@ async function upload({ auth, repositoryId, archivePath, apiHost }) {
 module.exports = {
   getUploadUrl,
   uploadToS3,
-  upload
+  upload,
+  // Exposed for unit tests. These are pure helpers that lock down Phase 2
+  // fixes (HTTPS enforcement, retry policy, retryable-error predicate) and
+  // are not part of the action's public runtime surface.
+  enforceHttps,
+  retryAsync,
+  isRetryableError,
+  HttpError
 }
