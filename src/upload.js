@@ -204,19 +204,31 @@ async function getUploadUrl({ auth, repositoryId, apiHost = DEFAULT_API_HOST }) 
 }
 
 /**
- * Upload a file to S3 using a signed URL
+ * Upload a file to S3 using a signed URL.
+ *
+ * Streams the file from disk to the request rather than buffering it into
+ * memory. fs.statSync supplies the Content-Length up front (S3 PUT requires
+ * it for signed URLs), then fs.createReadStream is piped into the PUT body.
+ * For multi-hundred-MB test bundles this keeps peak heap usage flat instead
+ * of mirroring the archive size.
+ *
+ * Each retryAsync attempt re-enters this function (see upload() below), so
+ * a stream that errored mid-pipe on attempt N is discarded and attempt N+1
+ * starts fresh from a new read stream + new request.
+ *
  * @param {string} signedUrl - Signed S3 PUT URL
  * @param {string} filePath - Path to file to upload
  * @returns {Promise<void>}
  */
 async function uploadToS3(signedUrl, filePath) {
-  const fileBuffer = fs.readFileSync(filePath)
   const fileSize = fs.statSync(filePath).size
 
   const parsedUrl = new URL(signedUrl)
   const protocol = parsedUrl.protocol === 'https:' ? https : http
 
   return new Promise((resolve, reject) => {
+    const fileStream = fs.createReadStream(filePath)
+
     const req = protocol.request(signedUrl, {
       method: 'PUT',
       headers: {
@@ -240,14 +252,25 @@ async function uploadToS3(signedUrl, filePath) {
       })
     })
 
-    req.on('error', reject)
+    req.on('error', (err) => {
+      fileStream.destroy()
+      reject(err)
+    })
     req.on('timeout', () => {
+      fileStream.destroy()
       req.destroy()
       reject(new Error('Upload timeout'))
     })
 
-    req.write(fileBuffer)
-    req.end()
+    fileStream.on('error', (err) => {
+      // Disk-side read failure (missing file, permission, mid-read I/O error).
+      // Tear down the in-flight request so the socket doesn't stay open with a
+      // partial body — S3 would either time out or 400 us back anyway.
+      req.destroy()
+      reject(err)
+    })
+
+    fileStream.pipe(req)
   })
 }
 
