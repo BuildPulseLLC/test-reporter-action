@@ -1,6 +1,6 @@
 {
-  "name": "buildpulse-action",
-  "version": "2.0.0",
+  "name": "test-reporter-action",
+  "version": "3.0.0",
   "description": "GitHub Action to upload test results to BuildPulse",
   "main": "dist/index.js",
   "scripts": {

@@ -1,1 +1,5 @@
 node_modules/
+
+# Internal-only files (kept locally, not published)
+CLAUDE.md
+GRADES.md
