@@ -81747,6 +81747,20 @@ async function run() {
 
     core.info(`Upload complete! Upload ID: ${result.uploadId}`)
 
+    // The upload succeeded at S3, but ingestion into the BuildPulse
+    // dashboard depends on the BuildPulse GitHub App being installed on
+    // this repository — without it the processing Lambda silently drops
+    // the upload. Surface that as a notice so customers who follow the
+    // setup page literally and end up with an empty dashboard have an
+    // in-CI breadcrumb instead of having to dig through CloudWatch.
+    core.notice(
+      `BuildPulse received this upload. Test results normally appear in the dashboard within a few minutes. ` +
+      `If you don't see data after ~10 minutes, the most common cause is that the BuildPulse GitHub App ` +
+      `is not installed on this repository — without it uploads are silently dropped during ingestion. ` +
+      `Install/grant access at https://github.com/apps/buildpulse and re-run the workflow.`,
+      { title: 'BuildPulse upload accepted' }
+    )
+
     // Set outputs
     core.setOutput('upload-id', result.uploadId)
     core.setOutput('account-id', result.accountId)
