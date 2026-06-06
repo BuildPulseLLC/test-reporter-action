@@ -9,7 +9,7 @@ const https = require('https')
 const http = require('http')
 const { URL } = require('url')
 
-const DEFAULT_API_HOST = 'https://app2.buildpulse.io'
+const DEFAULT_API_HOST = 'https://buildpulse.io'
 
 // Retry policy. Three attempts total with exponential backoff (1s, 3s, 9s).
 // The legacy run.sh used `curl --retry 3`; matching that posture for the new

@@ -20,7 +20,7 @@ const { enforceHttps } = require('../upload')
 
 describe('enforceHttps', () => {
   test('accepts production https URL', () => {
-    expect(() => enforceHttps('https://app2.buildpulse.io')).not.toThrow()
+    expect(() => enforceHttps('https://buildpulse.io')).not.toThrow()
   })
 
   test('accepts http://localhost:3000 (dev carve-out)', () => {
