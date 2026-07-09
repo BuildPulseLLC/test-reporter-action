@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   ci-gate:
-    runs-on: ubuntu-latest
+    runs-on: bp-ubuntu-latest-x64-2x
     steps:
       - uses: actions/checkout@v4
 
