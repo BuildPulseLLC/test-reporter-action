@@ -11,6 +11,10 @@ const { URL } = require('url')
 
 const DEFAULT_API_HOST = 'https://buildpulse.io'
 
+// Explicit User-Agent required: Node 24 no longer sends a default User-Agent
+// header, and CloudFront WAF blocks requests without one (HTTP 403).
+const USER_AGENT = 'BuildPulse-TestReporter/3.0'
+
 // Retry policy. Three attempts total with exponential backoff (1s, 3s, 9s).
 // The legacy run.sh used `curl --retry 3`; matching that posture for the new
 // Node implementation. Total worst-case added latency is ~13s before final
@@ -182,6 +186,7 @@ async function getUploadUrl({ auth, repositoryId, apiHost = DEFAULT_API_HOST }) 
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
       ...auth.headers
     },
     timeout: 30000
@@ -233,7 +238,8 @@ async function uploadToS3(signedUrl, filePath) {
       method: 'PUT',
       headers: {
         'Content-Type': 'application/gzip',
-        'Content-Length': fileSize
+        'Content-Length': fileSize,
+        'User-Agent': USER_AGENT
       },
       timeout: 120000 // 2 minute timeout for upload
     }, (res) => {
