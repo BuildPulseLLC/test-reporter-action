@@ -58437,6 +58437,15 @@ const { URL } = __nccwpck_require__(7016)
 
 const DEFAULT_API_HOST = 'https://buildpulse.io'
 
+// Identify the action on every API request. This is REQUIRED, not cosmetic:
+// the BuildPulse edge WAF runs AWS's managed CommonRuleSet, whose
+// NoUserAgent_HEADER rule blocks any request that arrives with no User-Agent
+// header (returning a bare CloudFront 403). Node's core http/https client does
+// NOT set a default User-Agent, so without this the upload-url call is dropped
+// at the edge before it ever reaches the API.
+const { version: ACTION_VERSION } = __nccwpck_require__(8330)
+const USER_AGENT = `buildpulse-test-reporter-action/${ACTION_VERSION}`
+
 // Retry policy. Three attempts total with exponential backoff (1s, 3s, 9s).
 // The legacy run.sh used `curl --retry 3`; matching that posture for the new
 // Node implementation. Total worst-case added latency is ~13s before final
@@ -58608,6 +58617,7 @@ async function getUploadUrl({ auth, repositoryId, apiHost = DEFAULT_API_HOST }) 
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
       ...auth.headers
     },
     timeout: 30000
@@ -77661,6 +77671,14 @@ const index = /*@__PURE__*/getDefaultExportFromCjs(bufferCrc32);
 
 module.exports = index;
 
+
+/***/ }),
+
+/***/ 8330:
+/***/ ((module) => {
+
+"use strict";
+module.exports = /*#__PURE__*/JSON.parse('{"name":"test-reporter-action","version":"3.0.0","description":"GitHub Action to upload test results to BuildPulse","main":"dist/index.js","scripts":{"build":"ncc build src/index.js -o dist --source-map --license licenses.txt","lint":"eslint src/","test":"jest"},"keywords":["github-actions","buildpulse","testing","flaky-tests"],"author":"BuildPulse","license":"MIT","dependencies":{"@actions/core":"^1.10.1","@actions/glob":"^0.4.0","archiver":"^7.0.1","yaml":"^2.4.0"},"devDependencies":{"@vercel/ncc":"^0.38.1","eslint":"^8.56.0","jest":"^29.7.0"}}');
 
 /***/ })
 

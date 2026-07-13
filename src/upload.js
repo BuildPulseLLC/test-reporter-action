@@ -11,6 +11,15 @@ const { URL } = require('url')
 
 const DEFAULT_API_HOST = 'https://buildpulse.io'
 
+// Identify the action on every API request. This is REQUIRED, not cosmetic:
+// the BuildPulse edge WAF runs AWS's managed CommonRuleSet, whose
+// NoUserAgent_HEADER rule blocks any request that arrives with no User-Agent
+// header (returning a bare CloudFront 403). Node's core http/https client does
+// NOT set a default User-Agent, so without this the upload-url call is dropped
+// at the edge before it ever reaches the API.
+const { version: ACTION_VERSION } = require('../package.json')
+const USER_AGENT = `buildpulse-test-reporter-action/${ACTION_VERSION}`
+
 // Retry policy. Three attempts total with exponential backoff (1s, 3s, 9s).
 // The legacy run.sh used `curl --retry 3`; matching that posture for the new
 // Node implementation. Total worst-case added latency is ~13s before final
@@ -182,6 +191,7 @@ async function getUploadUrl({ auth, repositoryId, apiHost = DEFAULT_API_HOST }) 
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'User-Agent': USER_AGENT,
       ...auth.headers
     },
     timeout: 30000
