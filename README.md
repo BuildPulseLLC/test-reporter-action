@@ -78,7 +78,7 @@ In wrap mode:
 - Runner hardware specs (CPUs, memory, OS) are always captured
 - CPU load + memory usage are sampled every second during the test command
 - The action step fails if your test command exits non-zero
-- Metrics show up on the build detail page in BuildPulse
+- Metrics show up on the test run detail page in BuildPulse
 
 ## Legacy: Access Key / Secret Authentication
 
@@ -112,7 +112,7 @@ New projects should use `api-token` instead.
 | `commit` | No | Commit SHA (default: `${{ github.sha }}`) |
 | `repository-path` | No | Path to the git clone (default: `.`) |
 | `coverage-files` | No | Coverage file paths (space-separated) |
-| `tags` | No | Tags to apply to this build (space-separated) |
+| `tags` | No | Tags to apply to this test run (space-separated) |
 | `command` | No | Test command to run in wrap mode (enables pipeline metrics) |
 | `quota` | No | Quota ID to count this upload against |
 
