@@ -29,6 +29,12 @@ is the same tell wearing a hat.
 Keep the unspaced en-dash in numeric ranges: `20–40%`, a `100–800` person
 company. That is correct typography and reads as human.
 
+A range whose endpoints contain spaces takes a spaced en-dash, and that is also
+correct: `Aug 7 – Sep 7, 2026`. The test bans the spaced en-dash because that is
+overwhelmingly a dash joining two clauses, so a genuine range like this one is
+the rare case where the guard is too broad and the code is right. Pin the line
+rather than mangling the date.
+
 Never substitute a hyphen with a space on either side. It is a worse em-dash and
 it reads as a find-and-replace job rather than a rewrite.
 
@@ -98,12 +104,16 @@ Anything not in that table is on the author. The guards exempt this file, since
 it necessarily quotes the character it bans, and they exempt fenced code blocks,
 because a dash inside sample output belongs to the code and not to our voice.
 
-### Known gap
+### Coverage
 
-`web-client/src/app/organizations/**` is in scope by this document and is NOT
-yet swept: roughly 90 literal em-dashes remain in the in-product dashboard copy.
-The guard covers marketing, the explainer prompts, and the invitation emails,
-and it bans entity dashes across all of `src`, so the untouched copy cannot get
-worse in the way that is hardest to see. Sweeping the dashboard tree is
-follow-up work, deliberately not folded into the PR that installed the rule.
-Do not read the guard passing as the whole product being clean.
+`web-client` is swept end to end: marketing, the site-wide social metadata, the
+explainer prompts, the invitation emails, and the in-product dashboard copy
+(tooltips, empty states, banners, chart subtitles, Stripe invoice descriptions,
+the Slack quarantine notice). The guard scans all of it, and bans entity dashes
+across the whole of `src` regardless.
+
+Not covered by any guard: post bodies already stored in `blog_posts`. Fixing the
+generator did nothing for the roughly 750 em-dashes in the 88 posts published
+before the rule existed. A backfill was considered and deliberately declined, so
+buildpulse.io/blog will keep showing them in older posts. That is a decision,
+not an oversight.
