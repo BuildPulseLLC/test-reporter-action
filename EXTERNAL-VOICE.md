@@ -23,27 +23,31 @@ messages, and anything only employees read. Those are not worth the diff noise.
 
 Do not use the em-dash (`—`, U+2014) or the horizontal bar (`―`, U+2015).
 
-Do not use a spaced en-dash (` – `, U+2013) in their place. That is the same
-tell wearing a hat.
+Do not use an en-dash (U+2013) with a space on either side in their place. That
+is the same tell wearing a hat.
 
 Keep the unspaced en-dash in numeric ranges: `20–40%`, a `100–800` person
 company. That is correct typography and reads as human.
 
-Never substitute a spaced hyphen (` - `). It is a worse em-dash and it reads as
-a find-and-replace job rather than a rewrite.
+Never substitute a hyphen with a space on either side. It is a worse em-dash and
+it reads as a find-and-replace job rather than a rewrite.
+
+(Those two rules are written out in words on purpose. Written as inline code the
+significant spaces get trimmed by a formatter, which silently inverts what the
+rule says.)
 
 ## How to rewrite, by job
 
 An em-dash does at least five different jobs. Each has its own correct fix.
 Pick by what the dash was actually doing, not by what is quickest.
 
-| Job | Use instead | Before | After |
-|---|---|---|---|
-| Abrupt pivot into a punchline | Full stop, two sentences | `You didn't fix it — you bribed it.` | `You didn't fix it. You bribed it.` |
-| Introducing an explanation | Colon | `Code blocks don't count — a code-heavy post needs the same prose.` | `Code blocks don't count: a code-heavy post needs the same prose.` |
-| Label before a definition, in a list | Colon | `**Bugs** — logic errors, nil deref.` | `**Bugs**: logic errors, nil deref.` |
-| Paired aside | Parentheses, or commas if short | `environments — fintech, healthtech — where CI gates` | `environments (fintech, healthtech) where CI gates` |
-| Clause tacked on the end | Comma, or recast | `...in AI features — or email support.` | `...in AI features, or email support.` |
+| Job                                  | Use instead                     | Before                                                              | After                                                              |
+| ------------------------------------ | ------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
+| Abrupt pivot into a punchline        | Full stop, two sentences        | `You didn't fix it — you bribed it.`                                | `You didn't fix it. You bribed it.`                                |
+| Introducing an explanation           | Colon                           | `Code blocks don't count — a code-heavy post needs the same prose.` | `Code blocks don't count: a code-heavy post needs the same prose.` |
+| Label before a definition, in a list | Colon                           | `**Bugs** — logic errors, nil deref.`                               | `**Bugs**: logic errors, nil deref.`                               |
+| Paired aside                         | Parentheses, or commas if short | `environments — fintech, healthtech — where CI gates`               | `environments (fintech, healthtech) where CI gates`                |
+| Clause tacked on the end             | Comma, or recast                | `...in AI features — or email support.`                             | `...in AI features, or email support.`                             |
 
 If none of those land cleanly, rewrite the sentence. The dash was often hiding a
 sentence that wanted to be two.
@@ -75,13 +79,13 @@ model swaps in a spaced hyphen and you have gained nothing.
 
 ## Enforcement
 
-| Surface | Guard |
-|---|---|
-| Blog posts | `agents/blog-generator/validate.go` hard reject, fed back into the model's retry loop |
-| Social captions | `agents/social-poster/compose.go` re-asks once, then publishes and warns |
-| Video captions and voiceover | `agents/video-poster/shotlist.go` critique pass checks for it |
-| Customer PR cap notice | `customer-agents/review-trigger/capnotice_test.go` |
-| Marketing pages | `web-client/__tests__/marketing/emDashGuard.test.ts` |
+| Surface                      | Guard                                                                                 |
+| ---------------------------- | ------------------------------------------------------------------------------------- |
+| Blog posts                   | `agents/blog-generator/validate.go` hard reject, fed back into the model's retry loop |
+| Social captions              | `agents/social-poster/compose.go` re-asks once, then publishes and warns              |
+| Video captions and voiceover | `agents/video-poster/shotlist.go` critique pass checks for it                         |
+| Customer PR cap notice       | `customer-agents/review-trigger/capnotice_test.go`                                    |
+| Marketing pages              | `web-client/__tests__/marketing/emDashGuard.test.ts`                                  |
 
 Anything not in that table is on the author. The guards exempt this file, since
 it necessarily quotes the character it bans, and they exempt fenced code blocks,
