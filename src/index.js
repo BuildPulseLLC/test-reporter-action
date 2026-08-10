@@ -234,7 +234,7 @@ async function run() {
     core.notice(
       `BuildPulse received this upload. Test results normally appear in the dashboard within a few minutes. ` +
       `If you don't see data after ~10 minutes, the most common cause is that the BuildPulse GitHub App ` +
-      `is not installed on this repository — without it uploads are silently dropped during ingestion. ` +
+      `is not installed on this repository. Without it, uploads are silently dropped during ingestion. ` +
       `Install/grant access at https://github.com/apps/buildpulse and re-run the workflow.`,
       { title: 'BuildPulse upload accepted' }
     )

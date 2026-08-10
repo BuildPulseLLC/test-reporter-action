@@ -21,12 +21,12 @@ Create an API token in your BuildPulse organization settings and store it as a r
 
 ## What's New in v3
 
-- **Secret masking** — `api-token`, `key`, and `secret` are masked in CI logs via `core.setSecret()` so they never leak even if a downstream tool prints the request body.
-- **Streaming upload to S3** — large monorepo archives are streamed instead of buffered in memory; multi-GB uploads no longer pressure the runner.
-- **Retries with exponential backoff** — transient 5xx and network errors retry automatically instead of failing the customer build on a single blip.
-- **HTTPS enforced** — the action now refuses to send credentials to a non-HTTPS `api-host`.
-- **Real test suite** — `npm test` exercises auth, archive, upload (with mocked S3), and metadata across GitHub Actions / Bitbucket Pipelines environments.
-- **Removed unused vulnerable deps** — `fast-xml-parser` (critical CVE) and other unused packages dropped.
+- **Secret masking**: `api-token`, `key`, and `secret` are masked in CI logs via `core.setSecret()` so they never leak even if a downstream tool prints the request body.
+- **Streaming upload to S3**: large monorepo archives are streamed instead of buffered in memory; multi-GB uploads no longer pressure the runner.
+- **Retries with exponential backoff**: transient 5xx and network errors retry automatically instead of failing the customer build on a single blip.
+- **HTTPS enforced**: the action now refuses to send credentials to a non-HTTPS `api-host`.
+- **Real test suite**: `npm test` exercises auth, archive, upload (with mocked S3), and metadata across GitHub Actions / Bitbucket Pipelines environments.
+- **Removed unused vulnerable deps**: `fast-xml-parser` (critical CVE) and other unused packages dropped.
 
 ## Upgrading From v2 (`buildpulse/buildpulse-action`)
 
@@ -104,7 +104,7 @@ New projects should use `api-token` instead.
 | Input | Required | Description |
 |-------|----------|-------------|
 | `api-token` | Recommended | BuildPulse API token from organization settings |
-| `path` | Yes | Path to JUnit XML file(s) — file, directory, or glob |
+| `path` | Yes | Path to JUnit XML file(s): file, directory, or glob |
 | `account` | Legacy only | BuildPulse account ID |
 | `repository` | Legacy only | BuildPulse repository ID |
 | `key` | Legacy only | `BUILDPULSE_ACCESS_KEY_ID` |
@@ -138,7 +138,7 @@ npm run lint      # ESLint over src/
 
 | File | Purpose |
 |------|---------|
-| `src/index.js` | Entry point — orchestrates the upload flow |
+| `src/index.js` | Entry point: orchestrates the upload flow |
 | `src/archive.js` | Packages test result files into a tar.gz archive |
 | `src/upload.js` | Streams the archive to S3 via a signed URL, with retries |
 | `src/auth.js` | API token + legacy key/secret authentication |
@@ -147,6 +147,12 @@ npm run lint      # ESLint over src/
 | `action.yml` | GitHub Action definition (inputs, outputs, runs) |
 
 The committed `dist/index.js` must stay in sync with `src/`. If you change `src/`, re-run `npm run build` and commit `dist/` in the same PR.
+
+## Writing for this repo
+
+This repository is public and this README is the first thing a prospective user reads, so its prose follows [EXTERNAL-VOICE.md](EXTERNAL-VOICE.md).
+
+The short version: no em-dashes. Rewrite with a full stop, a colon, parentheses, or a comma depending on what the dash was doing, and never a spaced hyphen. The same rule covers the action description in `action.yml` and any log line the action prints into a user's CI output.
 
 ## License
 
