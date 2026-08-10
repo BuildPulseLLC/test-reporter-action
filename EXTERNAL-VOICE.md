@@ -36,6 +36,13 @@ it reads as a find-and-replace job rather than a rewrite.
 significant spaces get trimmed by a formatter, which silently inverts what the
 rule says.)
 
+And no HTML entity dashes: `&mdash;`, `&#8212;`, `&#x2014;`, or a spaced
+`&ndash;`. They render as exactly the characters above, but they are plain ASCII
+in source, so a search for the character does not find them. In JSX they are
+worse than a rendering nit: an entity inside a multi-line text run makes the
+transform drop the space after an adjacent expression, which has already shipped
+`vs the 30before` to production once.
+
 ## How to rewrite, by job
 
 An em-dash does at least five different jobs. Each has its own correct fix.
@@ -90,3 +97,13 @@ model swaps in a spaced hyphen and you have gained nothing.
 Anything not in that table is on the author. The guards exempt this file, since
 it necessarily quotes the character it bans, and they exempt fenced code blocks,
 because a dash inside sample output belongs to the code and not to our voice.
+
+### Known gap
+
+`web-client/src/app/organizations/**` is in scope by this document and is NOT
+yet swept: roughly 90 literal em-dashes remain in the in-product dashboard copy.
+The guard covers marketing, the explainer prompts, and the invitation emails,
+and it bans entity dashes across all of `src`, so the untouched copy cannot get
+worse in the way that is hardest to see. Sweeping the dashboard tree is
+follow-up work, deliberately not folded into the PR that installed the rule.
+Do not read the guard passing as the whole product being clean.
