@@ -1,4 +1,6 @@
-# BuildPulse Test Reporter Action
+<a href="https://buildpulse.io"><img src=".github/banner.svg" alt="test-reporter-action, by BuildPulse" width="100%"></a>
+
+<a href="https://buildpulse.io/products/flaky-tests?ref=github-badge"><img src=".github/runs-on-buildpulse-compact.svg" alt="Runs on BuildPulse" height="28"></a>
 
 GitHub Action that uploads test results from your CI pipeline to [BuildPulse](https://buildpulse.io) for flaky test detection and ranking.
 
