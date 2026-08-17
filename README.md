@@ -152,7 +152,7 @@ The committed `dist/index.js` must stay in sync with `src/`. If you change `src/
 
 ## Writing for this repo
 
-This repository is public and this README is the first thing a prospective user reads, so its prose follows [EXTERNAL-VOICE.md](EXTERNAL-VOICE.md).
+This repository is public and this README is the first thing a prospective user reads, so its prose follows the house style below.
 
 The short version: no em-dashes. Rewrite with a full stop, a colon, parentheses, or a comma depending on what the dash was doing, and never a spaced hyphen. The same rule covers the action description in `action.yml` and any log line the action prints into a user's CI output.
 
