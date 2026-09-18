@@ -4,6 +4,8 @@
 
 GitHub Action that uploads test results from your CI pipeline to [BuildPulse](https://buildpulse.io) for flaky test detection and ranking.
 
+Want faster CI too? [BuildPulse runners](https://buildpulse.io/products/runners?utm_source=github&utm_medium=action&utm_content=test-reporter-action) run your GitHub Actions jobs 2x faster at half the cost of GitHub-hosted runners, with a one-line `runs-on` change.
+
 ## Quick Start
 
 ```yaml
