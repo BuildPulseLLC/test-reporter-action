@@ -1,7 +1,6 @@
-name: BuildPulse
+name: BuildPulse Test Reporter
 description: |
-  Send test results to buildpulse.io to help you identify and eliminate flaky
-  tests
+  Upload test results to BuildPulse to detect, rank, and quarantine flaky tests
 author: BuildPulse
 branding:
   icon: "activity"
