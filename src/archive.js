@@ -47,6 +47,9 @@ function createMetadataYaml(metadata, options = {}) {
     content.git.pull_request = {
       number: parseInt(metadata.prNumber, 10)
     }
+    if (metadata.prHeadSha) {
+      content.git.pull_request.head_sha = metadata.prHeadSha
+    }
   }
 
   if (options.tags && options.tags.length > 0) {
