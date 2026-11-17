@@ -84,6 +84,24 @@ In wrap mode:
 - The action step fails if your test command exits non-zero
 - Metrics show up on the test run detail page in BuildPulse
 
+## Job Summary
+
+After each upload the action writes a summary to the GitHub job summary, so every run shows its results without opening BuildPulse:
+
+```
+BuildPulse: 1,284 tests, 3 failed (2 new, 1 known flaky), 12 skipped, 4m 12s
+```
+
+Below the headline is a table of the failed tests (up to 20) with the first line of each failure message. Each failure is labeled from your BuildPulse data:
+
+- **New failure**: BuildPulse does not list the test as flaky or quarantined.
+- **Known flaky**: BuildPulse has detected the test as flaky in this repository.
+- **Quarantined**: the test is quarantined in BuildPulse.
+
+The labels need the `api-token` input and work on every BuildPulse plan; the lookup does not count as API usage. The lookup has a 3 second limit and runs while the upload is in progress. If it fails or times out, the summary still shows the totals and failures and says why flaky status is unavailable. The summary never fails the step.
+
+Set `job-summary: false` to turn it off.
+
 ## Legacy: Access Key / Secret Authentication
 
 For customers still on the legacy auth scheme:
@@ -119,6 +137,7 @@ New projects should use `api-token` instead.
 | `tags` | No | Tags to apply to this test run (space-separated) |
 | `command` | No | Test command to run in wrap mode (enables pipeline metrics) |
 | `quota` | No | Quota ID to count this upload against |
+| `job-summary` | No | Write the job summary (default: `true`) |
 
 ## Outputs
 
@@ -148,6 +167,9 @@ npm run lint      # ESLint over src/
 | `src/auth.js` | API token + legacy key/secret authentication |
 | `src/metadata.js` | Collects Git metadata (GitHub Actions + Bitbucket Pipelines) |
 | `src/sampler.js` | CPU/memory resource sampler used in wrap mode |
+| `src/junit.js` | Reads JUnit XML locally for the job summary |
+| `src/flaky.js` | Looks up flaky and quarantined tests from the BuildPulse API |
+| `src/summary.js` | Builds and writes the GitHub job summary |
 | `action.yml` | GitHub Action definition (inputs, outputs, runs) |
 
 The committed `dist/index.js` must stay in sync with `src/`. If you change `src/`, re-run `npm run build` and commit `dist/` in the same PR.

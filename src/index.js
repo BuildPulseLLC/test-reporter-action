@@ -16,6 +16,7 @@ const { collectMetadata } = require('./metadata')
 const { createArchive } = require('./archive')
 const { upload } = require('./upload')
 const { createSampler, getRunnerInfo } = require('./sampler')
+const { isSummaryEnabled, startSummary, finishSummary } = require('./summary')
 
 /**
  * Parse space-separated input into array
@@ -61,6 +62,11 @@ function runCommand(command) {
  * Main action entry point
  */
 async function run() {
+  // Job summary state. Filled in once result files are found; written after
+  // the upload whether or not it succeeded. Summary code never throws.
+  let summary = null
+  let uploadResult = null
+
   try {
     // Read credential inputs FIRST and register them with the runner so any
     // subsequent log/error path replaces them with `***`. GitHub Actions only
@@ -90,7 +96,8 @@ async function run() {
       tags: core.getInput('tags'),
       quotaId: core.getInput('quota'),
       apiHost: core.getInput('api-host') || process.env.BUILDPULSE_API_HOST,
-      command: core.getInput('command')
+      command: core.getInput('command'),
+      jobSummary: isSummaryEnabled(core.getInput('job-summary'))
     }
 
     // Special handling for Dependabot - skip if no credentials available
@@ -149,6 +156,16 @@ async function run() {
     for (const file of testFiles) {
       core.debug(`  - ${file}`)
     }
+
+    // Read the results for the job summary and start the BuildPulse flaky
+    // lookup now, so its (capped) wait overlaps the upload below.
+    summary = startSummary({
+      enabled: inputs.jobSummary,
+      files: testFiles,
+      apiToken: inputs.apiToken,
+      repository: process.env.GITHUB_REPOSITORY,
+      apiHost: inputs.apiHost
+    })
 
     // Validate repository path
     if (!fs.existsSync(inputs.repositoryPath)) {
@@ -222,6 +239,7 @@ async function run() {
       archivePath,
       apiHost: inputs.apiHost
     })
+    uploadResult = result
 
     core.info(`Upload complete! Upload ID: ${result.uploadId}`)
 
@@ -258,6 +276,9 @@ async function run() {
   } catch (error) {
     core.setFailed(error.message)
   }
+
+  // Any error after the summary started means nothing reached BuildPulse.
+  await finishSummary(summary, { uploadResult, uploadFailed: !uploadResult })
 }
 
 run()
