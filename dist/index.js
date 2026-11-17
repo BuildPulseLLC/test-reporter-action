@@ -58101,6 +58101,521 @@ module.exports = {
 
 /***/ }),
 
+/***/ 8416:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/**
+ * Best-effort lookup of a repository's flaky and quarantined tests from the
+ * BuildPulse REST API, used only to label failures in the job summary.
+ *
+ * Contract: one attempt, one shared deadline (3 s by default) across every
+ * request, and the returned promise never rejects. Any failure resolves to
+ * `{ ok: false, reason }` so the summary can still render from local data.
+ *
+ * Endpoints (platform API, `Authorization: Bearer <api-token>`):
+ *   GET /api/v1/flaky/tests?repository=<name>&quarantine=false
+ *       flaky tests seen in the organization's reporting window
+ *   GET /api/v1/flaky/tests?repository=<name>&quarantine=true
+ *       quarantined tests
+ *   GET /api/me/repositories
+ *       the organization's repositories, used to link to this one
+ */
+
+const { enforceHttps } = __nccwpck_require__(7108)
+const { testKey } = __nccwpck_require__(9409)
+
+const DEFAULT_TIMEOUT_MS = 3000
+const PAGE_SIZE = 100 // the API's maximum
+const MAX_PAGES = 10 // per list, so at most 1,000 tests are compared
+const USER_AGENT = 'BuildPulse-TestReporter/3.0'
+
+/**
+ * Work out the platform API host from the action's api-host. The web app and
+ * upload endpoint live on buildpulse.io; the REST API is on the platform.
+ * subdomain of the same environment. BUILDPULSE_PLATFORM_API_HOST overrides.
+ * @param {string} [apiHost]
+ * @param {Object} [env]
+ * @returns {string|null} Origin, or null when it cannot be derived
+ */
+function resolvePlatformHost(apiHost, env = process.env) {
+  if (env.BUILDPULSE_PLATFORM_API_HOST) return env.BUILDPULSE_PLATFORM_API_HOST.replace(/\/+$/, '')
+  let host
+  try {
+    host = new URL(apiHost || 'https://buildpulse.io').hostname.replace(/^www\./, '')
+  } catch {
+    return null
+  }
+  if (host === 'buildpulse.io' || host.endsWith('.buildpulse.io')) return `https://platform.${host}`
+  return null
+}
+
+/**
+ * Explain a non-200 answer in a few words for the summary.
+ * @param {number} status
+ * @returns {string}
+ */
+function describeStatus(status) {
+  switch (status) {
+    case 401: return 'the API token was not accepted'
+    case 402: return 'this organization is over its plan limit, so test data reads are paused'
+    case 403: return "this organization's plan does not include API access"
+    case 404: return 'BuildPulse has no data for this repository yet'
+    default: return `the BuildPulse API answered ${status}`
+  }
+}
+
+class LookupError extends Error {}
+
+async function getJson(fetchImpl, url, token, signal) {
+  const res = await fetchImpl(url, {
+    method: 'GET',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'User-Agent': USER_AGENT
+    },
+    signal
+  })
+  if (res.status !== 200) throw new LookupError(describeStatus(res.status))
+  return res.json()
+}
+
+/**
+ * Page through one flaky list until it ends, MAX_PAGES is reached, or the
+ * deadline aborts the request.
+ */
+async function fetchList(fetchImpl, base, repoName, quarantine, token, signal) {
+  const keys = new Set()
+  let count = 0
+  let after = null
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      repository: repoName,
+      quarantine: quarantine ? 'true' : 'false',
+      limit: String(PAGE_SIZE)
+    })
+    if (after) params.set('after', after)
+    let body
+    try {
+      body = await getJson(fetchImpl, `${base}/api/v1/flaky/tests?${params}`, token, signal)
+    } catch (err) {
+      // Out of time after at least one page: keep what was read. Known flaky
+      // labels are still right; unmatched failures just are not called new.
+      if (page > 0 && signal.aborted) return { keys, count, complete: false }
+      throw err
+    }
+    if (page === 0) count = Number(body.count) || 0
+    for (const t of body.tests || []) {
+      keys.add(testKey(t.suite || 'default', t.name || ''))
+    }
+    after = body.metadata && body.metadata.after
+    if (!after) return { keys, count, complete: true }
+  }
+  return { keys, count, complete: false }
+}
+
+/**
+ * Find this repository's BuildPulse id, for the dashboard link.
+ * @returns {Promise<string|null>}
+ */
+async function fetchRepositoryId(fetchImpl, base, fullName, token, signal) {
+  const body = await getJson(fetchImpl, `${base}/api/me/repositories`, token, signal)
+  const want = fullName.toLowerCase()
+  const repo = (body.repositories || []).find((r) => (r.full_name || '').toLowerCase() === want)
+  return repo ? repo.id : null
+}
+
+function reasonFor(err, timedOut, timeoutMs) {
+  if (timedOut) return `BuildPulse did not answer within ${Math.round(timeoutMs / 100) / 10} s`
+  if (err instanceof LookupError) return err.message
+  return 'the BuildPulse API could not be reached'
+}
+
+/**
+ * @param {Object} params
+ * @param {string} params.apiToken - bp_ API token
+ * @param {string} params.repository - "owner/name"
+ * @param {string} [params.apiHost] - The action's api-host input
+ * @param {boolean} [params.includeFlaky=true] - Skip the flaky lists when there is nothing to label
+ * @param {number} [params.timeoutMs]
+ * @param {Function} [params.fetchImpl] - Injected for tests
+ * @param {Object} [params.env]
+ * @returns {Promise<{
+ *   flaky: ({ ok: true, flaky: Set<string>, quarantined: Set<string>, flakyCount: number,
+ *            quarantinedCount: number, complete: boolean } | { ok: false, reason: string }),
+ *   repositoryId: string|null
+ * }>}
+ */
+async function lookupFlakyStatus({
+  apiToken,
+  repository,
+  apiHost,
+  includeFlaky = true,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
+  fetchImpl = globalThis.fetch,
+  env = process.env
+}) {
+  const unavailable = (reason) => ({ flaky: { ok: false, reason }, repositoryId: null })
+
+  if (!apiToken) return unavailable('reading it needs the api-token input, and this job uses key and secret')
+  const [, repoName] = (repository || '').split('/')
+  if (!repoName) return unavailable('the repository name is not known')
+  if (typeof fetchImpl !== 'function') return unavailable('this runner has no fetch support')
+
+  const base = resolvePlatformHost(apiHost, env)
+  if (!base) return unavailable('the BuildPulse API host could not be determined')
+  try {
+    enforceHttps(base)
+  } catch (err) {
+    return unavailable(err.message)
+  }
+
+  const controller = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+  const { signal } = controller
+
+  try {
+    const repoIdP = fetchRepositoryId(fetchImpl, base, repository, apiToken, signal).catch(() => null)
+
+    let flaky = { ok: false, reason: 'there were no failures to check' }
+    if (includeFlaky) {
+      try {
+        const [known, quarantined] = await Promise.all([
+          fetchList(fetchImpl, base, repoName, false, apiToken, signal),
+          fetchList(fetchImpl, base, repoName, true, apiToken, signal)
+        ])
+        flaky = {
+          ok: true,
+          flaky: known.keys,
+          quarantined: quarantined.keys,
+          flakyCount: known.count,
+          quarantinedCount: quarantined.count,
+          complete: known.complete && quarantined.complete
+        }
+      } catch (err) {
+        flaky = { ok: false, reason: reasonFor(err, timedOut, timeoutMs) }
+      }
+    }
+
+    return { flaky, repositoryId: await repoIdP }
+  } catch (err) {
+    return unavailable(reasonFor(err, timedOut, timeoutMs))
+  } finally {
+    clearTimeout(timer)
+    // Cancel anything still in flight (the other list after one failed).
+    controller.abort()
+  }
+}
+
+module.exports = {
+  lookupFlakyStatus,
+  resolvePlatformHost,
+  describeStatus,
+  DEFAULT_TIMEOUT_MS,
+  MAX_PAGES,
+  PAGE_SIZE
+}
+
+
+/***/ }),
+
+/***/ 9409:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/**
+ * Local JUnit XML reader for the job summary.
+ *
+ * This is NOT the parser BuildPulse uses for ingestion (that runs server
+ * side). It only needs enough of each file to count results and list the
+ * failures, so it is a small tag scanner instead of a full XML parser, which
+ * keeps the action free of an XML dependency. It is tolerant by design: a file
+ * it cannot read is counted as unreadable and the rest of the summary still
+ * renders.
+ *
+ * Test identity (suite + name) is normalized with the same rules BuildPulse
+ * applies at ingestion, so a failure read here can be matched against the
+ * flaky and quarantined tests the BuildPulse API returns.
+ */
+
+const fs = __nccwpck_require__(9896)
+const path = __nccwpck_require__(6928)
+
+// Files larger than this are left out of the summary (they are still
+// uploaded). Reading them whole would cost memory for a cosmetic feature.
+const MAX_FILE_BYTES = 50 * 1024 * 1024
+
+// One token per match: a CDATA section, a comment, or one of the tags we care
+// about. CDATA and comments are matched so their contents (failure output
+// often contains XML) are skipped instead of being read as tags. Attribute
+// values may legally contain ">", hence the quoted-string alternatives.
+const TOKEN_RE = /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<(\/?)(testsuites|testsuite|testcase|failure|error|skipped)(?=[\s/>])((?:[^>"']|"[^"]*"|'[^']*')*?)(\/?)>/g
+const ATTR_RE = /([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+const ANSI_RE = /\u001b\[[^A-Za-z]*[A-Za-z]?/g
+
+/**
+ * Decode the five predefined XML entities plus numeric character references.
+ * @param {string} s
+ * @returns {string}
+ */
+function decodeEntities(s) {
+  if (!s || s.indexOf('&') === -1) return s || ''
+  return s.replace(/&(#x[0-9a-fA-F]+|#\d+|lt|gt|amp|quot|apos);/g, (m, ent) => {
+    switch (ent) {
+      case 'lt': return '<'
+      case 'gt': return '>'
+      case 'amp': return '&'
+      case 'quot': return '"'
+      case 'apos': return "'"
+    }
+    const code = ent[1] === 'x' ? parseInt(ent.slice(2), 16) : parseInt(ent.slice(1), 10)
+    try {
+      return String.fromCodePoint(code)
+    } catch {
+      return m
+    }
+  })
+}
+
+/**
+ * @param {string} raw - The attribute section of a tag
+ * @returns {Object<string, string>}
+ */
+function parseAttrs(raw) {
+  const attrs = {}
+  if (!raw) return attrs
+  ATTR_RE.lastIndex = 0
+  let m
+  while ((m = ATTR_RE.exec(raw)) !== null) {
+    attrs[m[1]] = decodeEntities(m[2] !== undefined ? m[2] : m[3])
+  }
+  return attrs
+}
+
+/**
+ * Text content of an element body: CDATA unwrapped, everything else decoded.
+ * @param {string} body
+ * @returns {string}
+ */
+function elementText(body) {
+  let out = ''
+  let last = 0
+  const re = /<!\[CDATA\[([\s\S]*?)\]\]>/g
+  let m
+  while ((m = re.exec(body)) !== null) {
+    out += decodeEntities(body.slice(last, m.index)) + m[1]
+    last = re.lastIndex
+  }
+  return out + decodeEntities(body.slice(last))
+}
+
+// Suite and name normalization, kept in step with BuildPulse ingestion so
+// local failures match the identities the API reports:
+//   - an empty suite name is stored as "default"
+//   - parallel RSpec shard suites ("rspec1", "rspec2", ...) collapse to "rspec"
+//   - ember-exam's per-run "Exam Partition N #R - Browser Id B - " prefix is dropped
+//   - Mocha hook failures ('"before each" hook for "x"') are attributed to "x"
+const RSPEC_SHARD_RE = /^rspec\d+$/
+const EMBER_EXAM_PREFIX_RE = /^Exam Partition \d+(?: #\d+)?(?: - Browser Id \d+)? - /
+
+function normalizeSuiteName(name) {
+  if (!name) return 'default'
+  if (RSPEC_SHARD_RE.test(name)) return 'rspec'
+  return name
+}
+
+function normalizeTestName(name) {
+  let n = (name || '').replace(EMBER_EXAM_PREFIX_RE, '')
+  if (n.includes('"before each"') || n.includes('"before all"')) {
+    const marker = '" hook for "'
+    const idx = n.indexOf(marker)
+    if (idx !== -1) {
+      const rest = n.slice(idx + marker.length)
+      const end = rest.lastIndexOf('"')
+      if (end !== -1) n = rest.slice(0, end)
+    }
+  }
+  return n
+}
+
+/**
+ * First non-blank line of the failure message attribute, falling back to the
+ * element body (jest-junit puts the whole failure in the body).
+ * @param {string} message
+ * @param {string} body
+ * @returns {string}
+ */
+function firstLine(message, body) {
+  for (const source of [message, body]) {
+    if (!source) continue
+    for (const line of source.split('\n')) {
+      const t = line.trim()
+      if (t) return t
+    }
+  }
+  return ''
+}
+
+function toSeconds(value) {
+  if (!value) return 0
+  const n = parseFloat(String(value).replace(/,/g, ''))
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
+/**
+ * Parse one JUnit XML document.
+ * @param {string} xml
+ * @returns {{ tests: number, failed: number, skipped: number, durationSec: number, failures: Array }}
+ */
+function parseJUnitXml(xml) {
+  const text = xml.indexOf('\u001b') === -1 ? xml : xml.replace(ANSI_RE, '')
+  const result = { tests: 0, failed: 0, skipped: 0, durationSec: 0, failures: [] }
+  const suites = []
+  let current = null
+  let pending = null // an open <failure>/<error> whose body we still need
+
+  const finish = () => {
+    if (!current) return
+    result.tests++
+    result.durationSec += current.time
+    if (current.status === 'failed') {
+      result.failed++
+      result.failures.push({
+        suite: current.suite,
+        classname: current.classname,
+        name: current.name,
+        file: current.file,
+        message: current.message
+      })
+    } else if (current.status === 'skipped') {
+      result.skipped++
+    }
+    current = null
+  }
+
+  TOKEN_RE.lastIndex = 0
+  let m
+  while ((m = TOKEN_RE.exec(text)) !== null) {
+    const tag = m[2]
+    if (!tag) continue // CDATA or comment
+    const closing = m[1] === '/'
+    const selfClosing = m[4] === '/'
+
+    if (closing) {
+      if (tag === 'testsuite') {
+        suites.pop()
+      } else if (tag === 'testcase') {
+        finish()
+      } else if ((tag === 'failure' || tag === 'error') && pending && current) {
+        if (!current.message) {
+          current.message = firstLine('', elementText(text.slice(pending.bodyStart, m.index)))
+        }
+        pending = null
+      }
+      continue
+    }
+
+    const attrs = parseAttrs(m[3])
+    if (tag === 'testsuite') {
+      if (!selfClosing) suites.push(attrs.name || '')
+    } else if (tag === 'testcase') {
+      finish() // tolerate a missing </testcase>
+      current = {
+        suite: normalizeSuiteName(suites.length ? suites[suites.length - 1] : ''),
+        classname: attrs.classname || '',
+        name: normalizeTestName(attrs.name || ''),
+        file: attrs.file || '',
+        time: toSeconds(attrs.time),
+        status: 'passed',
+        message: ''
+      }
+      if (selfClosing) finish()
+    } else if (current && (tag === 'failure' || tag === 'error')) {
+      if (current.status !== 'failed') {
+        current.status = 'failed'
+        current.message = firstLine(attrs.message, '')
+        pending = selfClosing ? null : { bodyStart: TOKEN_RE.lastIndex }
+      }
+    } else if (current && tag === 'skipped') {
+      if (current.status === 'passed') current.status = 'skipped'
+    }
+  }
+  finish()
+  return result
+}
+
+/**
+ * Whether BuildPulse ingestion treats this path as a JUnit file: an .xml file
+ * whose name does not contain "coverage" (those are read as coverage reports).
+ * @param {string} filePath
+ * @returns {boolean}
+ */
+function isJUnitPath(filePath) {
+  const base = path.basename(filePath).toLowerCase()
+  return base.endsWith('.xml') && !base.includes('coverage')
+}
+
+/**
+ * Read and total every JUnit file in the list. Never throws.
+ * @param {string[]} files - Paths as matched by the action's `path` input
+ * @returns {{ tests: number, passed: number, failed: number, skipped: number,
+ *   durationSec: number, failures: Array, filesRead: number, filesSkipped: number }}
+ */
+function readJUnitFiles(files) {
+  const totals = {
+    tests: 0, passed: 0, failed: 0, skipped: 0, durationSec: 0,
+    failures: [], filesRead: 0, filesSkipped: 0
+  }
+  for (const file of files || []) {
+    if (!isJUnitPath(file)) continue
+    try {
+      const stat = fs.statSync(file)
+      if (!stat.isFile()) continue
+      if (stat.size > MAX_FILE_BYTES) {
+        totals.filesSkipped++
+        continue
+      }
+      const r = parseJUnitXml(fs.readFileSync(file, 'utf8'))
+      totals.tests += r.tests
+      totals.failed += r.failed
+      totals.skipped += r.skipped
+      totals.durationSec += r.durationSec
+      totals.failures.push(...r.failures)
+      totals.filesRead++
+    } catch {
+      totals.filesSkipped++
+    }
+  }
+  totals.passed = totals.tests - totals.failed - totals.skipped
+  return totals
+}
+
+/**
+ * Key used to match a local failure against a test from the BuildPulse API.
+ * @param {string} suite
+ * @param {string} name
+ * @returns {string}
+ */
+function testKey(suite, name) {
+  return `${suite}\u0000${name}`
+}
+
+module.exports = {
+  readJUnitFiles,
+  parseJUnitXml,
+  isJUnitPath,
+  normalizeSuiteName,
+  normalizeTestName,
+  testKey,
+  MAX_FILE_BYTES
+}
+
+
+/***/ }),
+
 /***/ 1756:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -58421,6 +58936,310 @@ module.exports = {
 
 /***/ }),
 
+/***/ 9449:
+/***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
+
+/**
+ * GitHub job summary for the BuildPulse upload step.
+ *
+ * Renders totals and the failed tests from the JUnit files this step already
+ * collected, labels each failure with its BuildPulse flaky status when the API
+ * answers in time, and links to the repository in BuildPulse.
+ *
+ * Nothing in here may fail or noticeably slow the job: every entry point
+ * catches its own errors, the API lookup has a hard 3 s deadline, and it runs
+ * while the upload is in flight.
+ */
+
+const core = __nccwpck_require__(7484)
+const { readJUnitFiles, testKey } = __nccwpck_require__(9409)
+const { lookupFlakyStatus } = __nccwpck_require__(8416)
+
+const DEFAULT_MAX_FAILURES = 20
+const MAX_NAME_CHARS = 300
+const MAX_MESSAGE_CHARS = 200
+const DEFAULT_WEB_HOST = 'https://buildpulse.io'
+
+const LABELS = {
+  quarantined: 'Quarantined',
+  flaky: 'Known flaky',
+  new: 'New failure',
+  unknown: 'Failed'
+}
+
+/**
+ * Whether the `job-summary` input is on. Empty means the default (on).
+ * @param {string} value
+ * @returns {boolean}
+ */
+function isSummaryEnabled(value) {
+  const v = (value || '').trim().toLowerCase()
+  return !['false', 'no', 'off', '0'].includes(v)
+}
+
+/**
+ * Escape text for a GitHub markdown table cell: HTML-significant characters
+ * become entities, markdown punctuation is backslash-escaped, and newlines
+ * collapse to spaces so a cell stays on one row.
+ * @param {string} s
+ * @returns {string}
+ */
+function escapeMarkdown(s) {
+  return String(s || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/([\\`*_{}[\]()#+!|~-])/g, '\\$1')
+}
+
+function truncate(s, max) {
+  const chars = Array.from(s || '')
+  return chars.length > max ? `${chars.slice(0, max - 3).join('')}...` : chars.join('')
+}
+
+function formatCount(n) {
+  return Number(n).toLocaleString('en-US')
+}
+
+/**
+ * Human duration: "850ms", "12.3s", "4m 12s", "1h 5m".
+ * @param {number} seconds
+ * @returns {string}
+ */
+function formatDuration(seconds) {
+  const s = Number(seconds) || 0
+  if (s <= 0) return '0s'
+  if (s < 1) return `${Math.round(s * 1000)}ms`
+  if (s < 10) return `${(Math.round(s * 10) / 10).toString()}s`
+  if (s < 60) return `${Math.round(s)}s`
+  const total = Math.round(s)
+  if (total < 3600) return `${Math.floor(total / 60)}m ${total % 60}s`
+  return `${Math.floor(total / 3600)}h ${Math.floor((total % 3600) / 60)}m`
+}
+
+function plural(n, one, many) {
+  return `${formatCount(n)} ${n === 1 ? one : many}`
+}
+
+/**
+ * Label one failure from the flaky lookup.
+ * @param {Object} failure
+ * @param {Object} flaky - lookupFlakyStatus().flaky
+ * @returns {'quarantined'|'flaky'|'new'|'unknown'}
+ */
+function classifyFailure(failure, flaky) {
+  if (!flaky || !flaky.ok) return 'unknown'
+  const key = testKey(failure.suite, failure.name)
+  if (flaky.quarantined.has(key)) return 'quarantined'
+  if (flaky.flaky.has(key)) return 'flaky'
+  // A partial list cannot prove a test is not flaky.
+  return flaky.complete ? 'new' : 'unknown'
+}
+
+/**
+ * Build the dashboard links from what the upload and the API returned.
+ * @param {Object} params
+ * @param {string} [params.webHost]
+ * @param {string} [params.organizationId]
+ * @param {string} [params.repositoryId] - BuildPulse repository id (not the GitHub id)
+ * @returns {{ testRuns?: string, flakyTests?: string, repositories?: string }}
+ */
+function buildLinks({ webHost, organizationId, repositoryId }) {
+  if (!organizationId) return {}
+  let origin
+  try {
+    origin = new URL(webHost || DEFAULT_WEB_HOST).origin
+  } catch {
+    return {}
+  }
+  const org = `${origin}/organizations/${encodeURIComponent(organizationId)}`
+  if (!repositoryId) return { repositories: `${org}/repositories` }
+  const repo = `${org}/repositories/${encodeURIComponent(repositoryId)}`
+  return { testRuns: `${repo}/test-runs`, flakyTests: `${repo}/flaky-tests` }
+}
+
+/**
+ * Render the summary markdown. Pure: no I/O.
+ * @param {Object} params
+ * @param {Object} params.results - readJUnitFiles() output
+ * @param {Object} [params.flaky] - lookupFlakyStatus().flaky, or undefined when not looked up
+ * @param {Object} [params.links] - buildLinks() output
+ * @param {boolean} [params.uploadFailed]
+ * @param {number} [params.maxFailures]
+ * @returns {string}
+ */
+function buildSummary({ results, flaky, links = {}, uploadFailed = false, maxFailures = DEFAULT_MAX_FAILURES }) {
+  const lines = []
+  const filesNote = plural(results.filesRead, 'JUnit file', 'JUnit files')
+
+  if (results.tests === 0) {
+    lines.push('### BuildPulse: no test cases found', '')
+    lines.push(`Read ${filesNote} and found no test cases.`)
+  } else {
+    const failures = results.failures.map((f) => ({ ...f, status: classifyFailure(f, flaky) }))
+    const counts = { quarantined: 0, flaky: 0, new: 0, unknown: 0 }
+    for (const f of failures) counts[f.status]++
+
+    const parts = []
+    if (counts.new) parts.push(`${formatCount(counts.new)} new`)
+    if (counts.flaky) parts.push(`${formatCount(counts.flaky)} known flaky`)
+    if (counts.quarantined) parts.push(`${formatCount(counts.quarantined)} quarantined`)
+    const failedText = `${formatCount(results.failed)} failed` + (parts.length ? ` (${parts.join(', ')})` : '')
+
+    lines.push(
+      `### BuildPulse: ${plural(results.tests, 'test', 'tests')}, ${failedText}, ` +
+      `${formatCount(results.skipped)} skipped, ${formatDuration(results.durationSec)}`,
+      ''
+    )
+    lines.push(
+      `${formatCount(results.passed)} passed. ${formatDuration(results.durationSec)} is the sum of test durations ` +
+      `across ${filesNote}.`
+    )
+
+    if (failures.length) {
+      // Most actionable first: new failures, then unlabeled, then known flaky, then quarantined.
+      const order = { new: 0, unknown: 1, flaky: 2, quarantined: 3 }
+      const sorted = failures
+        .map((f, i) => ({ f, i }))
+        .sort((a, b) => order[a.f.status] - order[b.f.status] || a.i - b.i)
+        .map(({ f }) => f)
+      const shown = sorted.slice(0, maxFailures)
+
+      lines.push('', '| Status | Test | Failure |', '| --- | --- | --- |')
+      for (const f of shown) {
+        const where = f.classname || f.suite
+        const test = where && where !== 'default'
+          ? `${escapeMarkdown(truncate(where, MAX_NAME_CHARS))} › ${escapeMarkdown(truncate(f.name, MAX_NAME_CHARS))}`
+          : escapeMarkdown(truncate(f.name, MAX_NAME_CHARS))
+        const message = f.message ? escapeMarkdown(truncate(f.message, MAX_MESSAGE_CHARS)) : ' '
+        lines.push(`| ${LABELS[f.status]} | ${test} | ${message} |`)
+      }
+      if (sorted.length > shown.length) {
+        lines.push('', `And ${plural(sorted.length - shown.length, 'more failed test', 'more failed tests')}.`)
+      }
+
+      lines.push('')
+      if (flaky && flaky.ok) {
+        lines.push(
+          `New failure means BuildPulse does not list the test as flaky or quarantined. ` +
+          `This repository has ${plural(flaky.flakyCount, 'known flaky test', 'known flaky tests')} and ` +
+          `${formatCount(flaky.quarantinedCount)} quarantined in BuildPulse.`
+        )
+        if (!flaky.complete) {
+          lines.push(
+            '',
+            'Not every flaky and quarantined test could be checked in time, so failures that did not match ' +
+            'are marked Failed rather than New failure.'
+          )
+        }
+      } else if (flaky) {
+        lines.push(`Flaky status is unavailable: ${flaky.reason}.`)
+      }
+    }
+  }
+
+  if (results.filesSkipped) {
+    lines.push(
+      '',
+      `${plural(results.filesSkipped, 'file was', 'files were')} not counted because ` +
+      `${results.filesSkipped === 1 ? 'it' : 'they'} could not be read or exceeded 50 MB.`
+    )
+  }
+
+  if (uploadFailed) {
+    lines.push('', 'The upload to BuildPulse failed, so this run will not appear in BuildPulse.')
+  } else if (links.testRuns) {
+    lines.push('', `View in BuildPulse: [test runs](${links.testRuns}), [flaky tests](${links.flakyTests})`)
+  } else if (links.repositories) {
+    lines.push('', `View in BuildPulse: [repositories](${links.repositories})`)
+  }
+
+  return lines.join('\n') + '\n'
+}
+
+/**
+ * Read the local results and start the BuildPulse lookup. Call before the
+ * upload so the lookup overlaps it. Never throws.
+ * @param {Object} params
+ * @param {boolean} params.enabled - The job-summary input
+ * @param {string[]} params.files - Matched result files
+ * @param {string} [params.apiToken]
+ * @param {string} [params.repository] - "owner/name"
+ * @param {string} [params.apiHost]
+ * @param {Object} [params.lookupOptions] - Passed through to lookupFlakyStatus (tests)
+ * @returns {Object|null} State for finishSummary, or null when disabled
+ */
+function startSummary({ enabled, files, apiToken, repository, apiHost, lookupOptions = {} }) {
+  if (!enabled) return null
+  try {
+    const results = readJUnitFiles(files)
+    const lookup = lookupFlakyStatus({
+      apiToken,
+      repository,
+      apiHost,
+      includeFlaky: results.failed > 0,
+      ...lookupOptions
+    }).catch((err) => ({ flaky: { ok: false, reason: err.message }, repositoryId: null }))
+    return { results, lookup, apiToken, apiHost }
+  } catch (err) {
+    core.info(`BuildPulse job summary skipped: ${err.message}`)
+    return null
+  }
+}
+
+/**
+ * Wait for the lookup, render, and append to $GITHUB_STEP_SUMMARY. Never throws.
+ * @param {Object|null} state - From startSummary
+ * @param {Object} params
+ * @param {Object} [params.uploadResult] - upload() result, when the upload succeeded
+ * @param {boolean} [params.uploadFailed]
+ * @returns {Promise<string|null>} The markdown written, or null
+ */
+async function finishSummary(state, { uploadResult, uploadFailed = false } = {}) {
+  if (!state) return null
+  try {
+    if (!process.env.GITHUB_STEP_SUMMARY) {
+      core.debug('GITHUB_STEP_SUMMARY is not set; skipping the BuildPulse job summary')
+      return null
+    }
+    const { flaky, repositoryId } = await state.lookup
+    const links = buildLinks({
+      webHost: state.apiHost,
+      organizationId: uploadResult && uploadResult.organizationId,
+      repositoryId
+    })
+    const markdown = buildSummary({
+      results: state.results,
+      // Flaky status only matters when something failed.
+      flaky: state.results.failed > 0 ? flaky : undefined,
+      links,
+      uploadFailed
+    })
+    await core.summary.addRaw(markdown).write()
+    return markdown
+  } catch (err) {
+    core.info(`BuildPulse job summary skipped: ${err.message}`)
+    return null
+  }
+}
+
+module.exports = {
+  buildSummary,
+  buildLinks,
+  classifyFailure,
+  escapeMarkdown,
+  formatDuration,
+  isSummaryEnabled,
+  startSummary,
+  finishSummary,
+  LABELS
+}
+
+
+/***/ }),
+
 /***/ 7108:
 /***/ ((module, __unused_webpack_exports, __nccwpck_require__) => {
 
@@ -58735,6 +59554,7 @@ async function upload({ auth, repositoryId, archivePath, apiHost }) {
     return {
       uploadId: urlResponse.uploadId,
       accountId: urlResponse.accountId,
+      organizationId: urlResponse.organizationId,
       repositoryId: urlResponse.repositoryId
     }
   }, { label: 'BuildPulse upload' })
@@ -77739,6 +78559,7 @@ const { collectMetadata } = __nccwpck_require__(1756)
 const { createArchive } = __nccwpck_require__(79)
 const { upload } = __nccwpck_require__(7108)
 const { createSampler, getRunnerInfo } = __nccwpck_require__(8233)
+const { isSummaryEnabled, startSummary, finishSummary } = __nccwpck_require__(9449)
 
 /**
  * Parse space-separated input into array
@@ -77784,6 +78605,11 @@ function runCommand(command) {
  * Main action entry point
  */
 async function run() {
+  // Job summary state. Filled in once result files are found; written after
+  // the upload whether or not it succeeded. Summary code never throws.
+  let summary = null
+  let uploadResult = null
+
   try {
     // Read credential inputs FIRST and register them with the runner so any
     // subsequent log/error path replaces them with `***`. GitHub Actions only
@@ -77813,7 +78639,8 @@ async function run() {
       tags: core.getInput('tags'),
       quotaId: core.getInput('quota'),
       apiHost: core.getInput('api-host') || process.env.BUILDPULSE_API_HOST,
-      command: core.getInput('command')
+      command: core.getInput('command'),
+      jobSummary: isSummaryEnabled(core.getInput('job-summary'))
     }
 
     // Special handling for Dependabot - skip if no credentials available
@@ -77872,6 +78699,16 @@ async function run() {
     for (const file of testFiles) {
       core.debug(`  - ${file}`)
     }
+
+    // Read the results for the job summary and start the BuildPulse flaky
+    // lookup now, so its (capped) wait overlaps the upload below.
+    summary = startSummary({
+      enabled: inputs.jobSummary,
+      files: testFiles,
+      apiToken: inputs.apiToken,
+      repository: process.env.GITHUB_REPOSITORY,
+      apiHost: inputs.apiHost
+    })
 
     // Validate repository path
     if (!fs.existsSync(inputs.repositoryPath)) {
@@ -77945,6 +78782,7 @@ async function run() {
       archivePath,
       apiHost: inputs.apiHost
     })
+    uploadResult = result
 
     core.info(`Upload complete! Upload ID: ${result.uploadId}`)
 
@@ -77981,6 +78819,9 @@ async function run() {
   } catch (error) {
     core.setFailed(error.message)
   }
+
+  // Any error after the summary started means nothing reached BuildPulse.
+  await finishSummary(summary, { uploadResult, uploadFailed: !uploadResult })
 }
 
 run()

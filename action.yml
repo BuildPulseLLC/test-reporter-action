@@ -111,6 +111,14 @@ inputs:
       Example: "npm test", "pytest --junitxml=results.xml", "go test ./..."
     default: ""
     required: false
+  job-summary:
+    description: |
+      Write a summary of the test results to the GitHub job summary: totals,
+      the failed tests, and whether each failure is a known flaky test, a
+      quarantined test, or a new failure in BuildPulse. Set to "false" to turn
+      it off.
+    default: "true"
+    required: false
   api-host:
     description: |
       BuildPulse API host (for internal testing only).

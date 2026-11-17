@@ -309,6 +309,7 @@ async function upload({ auth, repositoryId, archivePath, apiHost }) {
     return {
       uploadId: urlResponse.uploadId,
       accountId: urlResponse.accountId,
+      organizationId: urlResponse.organizationId,
       repositoryId: urlResponse.repositoryId
     }
   }, { label: 'BuildPulse upload' })
