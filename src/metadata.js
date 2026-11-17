@@ -4,6 +4,7 @@
  */
 
 const { execSync } = require('child_process')
+const fs = require('fs')
 
 /**
  * Execute a git command and return trimmed output
@@ -52,6 +53,29 @@ function getBranchFromGit(cwd) {
 function getCommitMessage(commitSha, cwd) {
   // Get first line of commit message (subject)
   return gitCommand(`git log -1 --format=%s ${commitSha}`, cwd)
+}
+
+/**
+ * Get the pull request's own head commit from the GitHub event payload.
+ *
+ * On pull_request events GITHUB_SHA is GitHub's temporary merge commit
+ * (refs/pull/N/merge), which developers never see. The commit they pushed is
+ * pull_request.head.sha in the event file. BuildPulse keeps grouping a run's
+ * uploads by the merge commit and shows this one in the PR comment.
+ *
+ * @param {Object} env - Environment variables
+ * @returns {string|null} Head commit SHA, or null on other events or if unreadable
+ */
+function getPullRequestHeadSha(env) {
+  if (env.GITHUB_EVENT_NAME !== 'pull_request' && env.GITHUB_EVENT_NAME !== 'pull_request_target') return null
+  if (!env.GITHUB_EVENT_PATH) return null
+  try {
+    const event = JSON.parse(fs.readFileSync(env.GITHUB_EVENT_PATH, 'utf8'))
+    const sha = event?.pull_request?.head?.sha
+    return typeof sha === 'string' && /^[0-9a-f]{40}$/i.test(sha) ? sha : null
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -131,6 +155,7 @@ function collectGitHubMetadata(env, repositoryPath, overrideCommitSha) {
   const commitMessage = getCommitMessage(commitSha, repositoryPath)
   const [owner, repo] = (env.GITHUB_REPOSITORY || '').split('/')
   const prNumber = env.GITHUB_EVENT_NAME === 'pull_request' ? env.GITHUB_REF?.match(/refs\/pull\/(\d+)/)?.[1] : null
+  const prHeadSha = getPullRequestHeadSha(env)
 
   return {
     commit: commitSha,
@@ -140,6 +165,7 @@ function collectGitHubMetadata(env, repositoryPath, overrideCommitSha) {
     owner,
     repo,
     prNumber,
+    prHeadSha,
     ciProvider: 'github-actions',
     buildId: env.GITHUB_RUN_ID,
     buildNumber: env.GITHUB_RUN_NUMBER,
@@ -175,5 +201,6 @@ module.exports = {
   detectCIProvider,
   getTreeSha,
   getBranchFromGit,
-  getCommitMessage
+  getCommitMessage,
+  getPullRequestHeadSha
 }
