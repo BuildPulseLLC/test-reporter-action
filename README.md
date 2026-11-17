@@ -98,7 +98,7 @@ Below the headline is a table of the failed tests (up to 20) with the first line
 - **Known flaky**: BuildPulse has detected the test as flaky in this repository.
 - **Quarantined**: the test is quarantined in BuildPulse.
 
-The labels need the `api-token` input and a plan that includes API access. The lookup has a 3 second limit and runs while the upload is in progress. If it fails or times out, the summary still shows the totals and failures and says why flaky status is unavailable. The summary never fails the step.
+The labels need the `api-token` input and work on every BuildPulse plan; the lookup does not count as API usage. The lookup has a 3 second limit and runs while the upload is in progress. If it fails or times out, the summary still shows the totals and failures and says why flaky status is unavailable. The summary never fails the step.
 
 Set `job-summary: false` to turn it off.
 

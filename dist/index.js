@@ -58113,10 +58113,12 @@ module.exports = {
  * `{ ok: false, reason }` so the summary can still render from local data.
  *
  * Endpoints (platform API, `Authorization: Bearer <api-token>`):
- *   GET /api/v1/flaky/tests?repository=<name>&quarantine=false
- *       flaky tests seen in the organization's reporting window
- *   GET /api/v1/flaky/tests?repository=<name>&quarantine=true
- *       quarantined tests
+ *   GET /api/v1/action/test-status?repository=<name>[&names=false]
+ *       one request: flaky and quarantined test names plus the repository
+ *       id. Available on every plan and not counted as API usage.
+ *   Fallback, only when that route answers a plain 404 (an older platform):
+ *   GET /api/v1/flaky/tests?repository=<name>&quarantine=false|true
+ *       flaky / quarantined tests, paginated
  *   GET /api/me/repositories
  *       the organization's repositories, used to link to this one
  */
@@ -58160,14 +58162,15 @@ function describeStatus(status) {
     case 402: return 'this organization is over its plan limit, so test data reads are paused'
     case 403: return "this organization's plan does not include API access"
     case 404: return 'BuildPulse has no data for this repository yet'
+    case 429: return 'BuildPulse is rate limiting this API token, try again shortly'
     default: return `the BuildPulse API answered ${status}`
   }
 }
 
 class LookupError extends Error {}
 
-async function getJson(fetchImpl, url, token, signal) {
-  const res = await fetchImpl(url, {
+function request(fetchImpl, url, token, signal) {
+  return fetchImpl(url, {
     method: 'GET',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -58176,8 +58179,44 @@ async function getJson(fetchImpl, url, token, signal) {
     },
     signal
   })
+}
+
+async function getJson(fetchImpl, url, token, signal) {
+  const res = await request(fetchImpl, url, token, signal)
   if (res.status !== 200) throw new LookupError(describeStatus(res.status))
   return res.json()
+}
+
+/**
+ * One request for the repository's test status.
+ * @returns {Promise<Object|null>} The response body, or null when the route
+ *   does not exist (a plain 404 from an older platform), so the caller falls
+ *   back to the paginated endpoints.
+ */
+async function fetchTestStatus(fetchImpl, base, repoName, includeFlaky, token, signal) {
+  const params = new URLSearchParams({ repository: repoName })
+  if (!includeFlaky) params.set('names', 'false')
+  const res = await request(fetchImpl, `${base}/api/v1/action/test-status?${params}`, token, signal)
+  if (res.status === 200) return res.json()
+  if (res.status === 404) {
+    // The route answers an unknown repository with a JSON code; anything
+    // else on a 404 means the route itself is missing.
+    let body = null
+    try {
+      body = await res.json()
+    } catch {
+      // Not JSON: the route is missing.
+    }
+    if (body && body.code === 'repository_not_found') throw new LookupError(describeStatus(404))
+    return null
+  }
+  throw new LookupError(describeStatus(res.status))
+}
+
+function keysOf(tests) {
+  const keys = new Set()
+  for (const t of tests || []) keys.add(testKey(t.suite || 'default', t.name || ''))
+  return keys
 }
 
 /**
@@ -58205,9 +58244,7 @@ async function fetchList(fetchImpl, base, repoName, quarantine, token, signal) {
       throw err
     }
     if (page === 0) count = Number(body.count) || 0
-    for (const t of body.tests || []) {
-      keys.add(testKey(t.suite || 'default', t.name || ''))
-    }
+    for (const key of keysOf(body.tests)) keys.add(key)
     after = body.metadata && body.metadata.after
     if (!after) return { keys, count, complete: true }
   }
@@ -58278,10 +58315,37 @@ async function lookupFlakyStatus({
   }, timeoutMs)
   const { signal } = controller
 
+  const noFailures = { ok: false, reason: 'there were no failures to check' }
+
   try {
+    let status
+    try {
+      status = await fetchTestStatus(fetchImpl, base, repoName, includeFlaky, apiToken, signal)
+    } catch (err) {
+      return unavailable(reasonFor(err, timedOut, timeoutMs))
+    }
+    if (status) {
+      const repositoryId = status.repositoryId || null
+      if (!includeFlaky) return { flaky: noFailures, repositoryId }
+      return {
+        flaky: {
+          ok: true,
+          flaky: keysOf(status.flaky),
+          quarantined: keysOf(status.quarantined),
+          flakyCount: Number(status.flakyCount) || 0,
+          quarantinedCount: Number(status.quarantinedCount) || 0,
+          // Past the server's cap an unmatched failure may still be flaky.
+          complete: !status.truncated
+        },
+        repositoryId
+      }
+    }
+
+    // Older platform without the single-request route: page the public
+    // endpoints instead, within what is left of the same deadline.
     const repoIdP = fetchRepositoryId(fetchImpl, base, repository, apiToken, signal).catch(() => null)
 
-    let flaky = { ok: false, reason: 'there were no failures to check' }
+    let flaky = noFailures
     if (includeFlaky) {
       try {
         const [known, quarantined] = await Promise.all([

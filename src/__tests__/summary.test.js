@@ -219,20 +219,25 @@ describe('startSummary / finishSummary', () => {
   })
 
   test('labels a known flaky failure end to end', async () => {
-    const fetchImpl = jest.fn(async (url) => {
-      const u = new URL(url)
-      const body = u.pathname === '/api/me/repositories'
-        ? { repositories: [{ id: 'repo-1', full_name: 'acme/shop' }] }
-        : u.searchParams.get('quarantine') === 'true'
-          ? { count: 0, tests: [], metadata: {} }
-          : { count: 1, tests: [{ name: 'applies discount', suite: 'CheckoutTest' }], metadata: {} }
-      return { status: 200, json: async () => body }
-    })
+    const fetchImpl = jest.fn(async () => ({
+      status: 200,
+      json: async () => ({
+        flaky: [{ suite: 'CheckoutTest', name: 'applies discount' }],
+        quarantined: [],
+        flakyCount: 1,
+        quarantinedCount: 0,
+        truncated: false,
+        repositoryId: 'repo-1',
+        organizationId: 'org-1'
+      })
+    }))
     const state = startSummary({ enabled: true, files: [file], apiToken: 'bp_x', repository: 'acme/shop', lookupOptions: { fetchImpl, env: {} } })
     const md = await finishSummary(state, { uploadResult: { organizationId: 'org-1' } })
     expect(md).toContain('1 failed (1 known flaky)')
     expect(md).toContain('| Known flaky | CheckoutTest › applies discount | boom |')
     expect(md).toContain('/organizations/org-1/repositories/repo-1/test-runs')
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(new URL(fetchImpl.mock.calls[0][0]).pathname).toBe('/api/v1/action/test-status')
   })
 
   test('without GITHUB_STEP_SUMMARY nothing is written', async () => {
